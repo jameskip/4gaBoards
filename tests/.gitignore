@@ -1,0 +1,8 @@
+node_modules/
+playwright-report/
+test-results/
+playwright/.auth/
+
+# Override the root .gitignore which excludes package-lock.json globally —
+# tests/ is a standalone npm package; CI relies on this lockfile for `npm ci`.
+!package-lock.json
