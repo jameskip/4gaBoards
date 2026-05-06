@@ -30,19 +30,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: lts/*
-        # Note: deliberately not using `cache: npm`. setup-node runs `npm config get cache`
-        # from the repo root, where package.json has `devEngines.packageManager: pnpm` —
-        # npm 11 rejects with EBADDEVENGINES. Skipping the cache costs ~10s on a clean run.
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
+      # Install only the tests workspace + its deps (skips client/server install,
+      # which would otherwise add minutes for React/Sails dependencies we don't need).
       - name: Install test dependencies
-        run: npm ci
+        working-directory: ${{ github.workspace }}
+        run: pnpm install --frozen-lockfile --filter "@4gaboards/tests..."
 
       - name: Lint
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Start app stack (docker compose)
         working-directory: ${{ github.workspace }}
@@ -66,12 +73,12 @@ jobs:
       # Per Playwright docs: browser caching is "generally not recommended" because cache-restore
       # time is similar to download time and OS deps still need installing on Linux. Skip the cache.
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Run Playwright tests
         env:
           BASE_URL: http://localhost:3000
-        run: npx playwright test
+        run: pnpm exec playwright test
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
