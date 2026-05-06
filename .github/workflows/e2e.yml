@@ -31,8 +31,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: lts/*
-          cache: npm
-          cache-dependency-path: tests/package-lock.json
+        # Note: deliberately not using `cache: npm`. setup-node runs `npm config get cache`
+        # from the repo root, where package.json has `devEngines.packageManager: pnpm` —
+        # npm 11 rejects with EBADDEVENGINES. Skipping the cache costs ~10s on a clean run.
 
       - name: Install test dependencies
         run: npm ci
