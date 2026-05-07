@@ -1,0 +1,107 @@
+name: E2E
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Colored output across npm/eslint/playwright so ✓/✘ are visible in Actions logs.
+      FORCE_COLOR: '1'
+      # Opt JS-based actions (checkout, setup-node, cache, upload-artifact) onto Node 24
+      # ahead of the June 2026 default switch. Removes the Node-20 deprecation warning.
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+    defaults:
+      run:
+        working-directory: tests
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # Install only the tests workspace + its deps (skips client/server install,
+      # which would otherwise add minutes for React/Sails dependencies we don't need).
+      - name: Install test dependencies
+        working-directory: ${{ github.workspace }}
+        run: pnpm install --frozen-lockfile --filter "@4gaboards/tests..."
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Start app stack (docker compose)
+        working-directory: ${{ github.workspace }}
+        run: docker compose up -d
+
+      - name: Wait for app to be ready
+        run: |
+          # /api/core-settings-public is unauthenticated and only 200s once Sails has
+          # finished migrations + DB connection — a real readiness signal, not just static-file 200.
+          for i in {1..120}; do
+            if curl -fsS -o /dev/null http://localhost:3000/api/core-settings-public; then
+              echo "App is up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "App did not become ready within 120s"
+          docker compose -f ${{ github.workspace }}/docker-compose.yml logs --tail=200
+          exit 1
+
+      # Per Playwright docs: browser caching is "generally not recommended" because cache-restore
+      # time is similar to download time and OS deps still need installing on Linux. Skip the cache.
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        env:
+          BASE_URL: http://localhost:3000
+        run: pnpm exec playwright test
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: tests/playwright-report/
+          retention-days: 14
+
+      - name: Upload failure traces & screenshots
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-test-results
+          path: tests/test-results/
+          retention-days: 14
+
+      - name: Dump app logs on failure
+        if: failure()
+        working-directory: ${{ github.workspace }}
+        run: docker compose logs --tail=500 --no-color
+
+      - name: Tear down app stack
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: docker compose down -v
